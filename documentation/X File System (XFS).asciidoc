@@ -1,0 +1,2030 @@
+= X File System (XFS)
+Analysis of SGI XFS
+
+:toc:
+:toclevels: 4
+
+:numbered!:
+[abstract]
+== Summary
+
+The X File System (XFS) is a file system that originates from SGI but is used
+in various Linux distributions like RHEL. Some sources indicate that X was a
+a placeholder for a name that never given. This specification is based on
+publicly available work on the format and was enhanced by analyzing test data.
+
+This document is intended as a working document of the data format specification
+for the libfsxfs project.
+
+[preface]
+== Document information
+
+[cols="1,5"]
+|===
+| Author(s): | Joachim Metz <joachim.metz@gmail.com>
+| Abstract: | This document contains information about the X File System (XFS)
+| Classification: | Public
+| Keywords: | XFS
+|===
+
+[preface]
+== License
+
+....
+Copyright (C) 2020-2022, Joachim Metz <joachim.metz@gmail.com>.
+Permission is granted to copy, distribute and/or modify this document under the
+terms of the GNU Free Documentation License, Version 1.3 or any later version
+published by the Free Software Foundation; with no Invariant Sections, no
+Front-Cover Texts, and no Back-Cover Texts. A copy of the license is included
+in the section entitled "GNU Free Documentation License".
+....
+
+[preface]
+== Revision history
+
+[cols="1,1,1,5",options="header"]
+|===
+| Version | Author | Date | Comments
+| 0.0.1 | J.B. Metz | September 2020 | Initial version.
+| 0.0.2 | J.B. Metz | November 2020 | Additional information about data format.
+| 0.0.3 | J.B. Metz | April 2021 | Changes to formatting.
+| 0.0.4 | J.B. Metz | May 2021 | Clean up of some notes.
+| 0.0.5 | J.B. Metz | July 2021 | Additional information about extended attributes.
+| 0.0.6 | J.B. Metz | May 2022 | Additional information about extended attributes.
+| 0.0.7 | J.B. Metz | July 2022 | Additional information about device identifier.
+|===
+
+:numbered:
+== Overview
+
+The X File System (XFS) is a file system that originates from SGI but is used
+in various Linux distributions like RHEL. Some sources indicate that X was a
+a placeholder for a name that never given.
+
+[cols="1,5",options="header"]
+|===
+| Characteristics | Description
+| Byte order | big-endian
+| Date and time values | number of seconds since January 1, 1970 00:00:00 UTC (POSIX epoch) and fraction of second in number of nanoseconds
+| Character strings |
+|===
+
+== Terminology
+
+=== Absolute and relative inode numbers
+
+A relative inode number is an inode number used within a specific allocation
+group. An absolute inode number combines the allocation group number and the
+relative inode number.
+
+....
+absolute inode number = ( allocation group number << number of relative inode number bits ) | relative inode number
+....
+
+The number of relative inode number bits is:
+
+....
+number of relative inode number bits = allocation group size log2 + number of inodes per block log2
+....
+
+=== [[file_system_block_number]]File system block number
+
+A relative blcok number is a block number relative to the start of an allocation
+group. A file system block number (xfs_fsblock_t) combines the allocation group
+number and the relative block number.
+
+....
+file system block number = ( allocation group number << number of relative block number bits ) | relative block number
+....
+
+....
+number of relative block number bits = allocation group size log2
+....
+
+....
+file offset = ( allocation group block number + relative block number ) x block size
+....
+
+== The allocation group
+
+An allocation group consists of:
+
+* a sector containing a superblock
+* a sector containing free block information
+* a sector containing inode B+ tree information
+* a sector containing internal free list
+* blocks containing
+  * root of the inode B+ tree
+  * root of the free space B+ tree
+  * free list
+  * inodes table
+
+== The superblock
+
+The XFS superblock (xfs_sb_t) is 208 bytes of size and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | "XFSB" | Signature
+| 4 | 4 | | Block size +
+Typicaly 4096 bytes (4 KiB), can range from 512 to 65536 bytes
+| 8 | 8 | | Total number of blocks
+| 16 | 8 | | Number of real-time (device) blocks
+| 24 | 8 | | Number of real-time (device) extents
+| 32 | 16 | | File system (or volume) identifier +
+Contains an UUID
+| 48 | 8 | | Journal block number +
+Contains a file system block number or 0 if the journal is stored on a separate device +
+See section: <<file_system_block_number,File system block number>>
+| 56 | 8 | | Root directory inode number
+| 64 | 8 | | Real-time bitmap extents inode number
+| 72 | 8 | | Real-time bitmap summary inode number
+| 80 | 4 | | Real-time extent size +
+Contains number of blocks
+| 84 | 4 | | Allocation group size +
+Contains number of blocks
+| 88 | 4 | | Number of allocation groups
+| 92 | 4 | | Real-time bitmap size +
+Contains number of blocks
+| 96 | 4 | | Journal size +
+Contains number of blocks
+| 100 | 2 | | Version and feature flags +
+The 4 LSB contain the version the remaining bits are used to store the <<feature_flags,feature flags>>
+| 102 | 2 | | Sector size (in bytes)
+| 104 | 2 | | Inode size (in bytes) +
+Supported range 256 - 2048
+| 106 | 2 | | Number of inodes per block
+| 108 | 12 | | Volume label (or name)
+| 120 | 1 | | Block size in log2 +
+Where value = ( 2 ^ value in log2 ) or 0 if value in log2 is 0
+| 121 | 1 | | Sector size in log2 +
+Where value = ( 2 ^ value in log2 ) or 0 if value in log2 is 0
+| 122 | 1 | | Inode size in log2 +
+Where value = ( 2 ^ value in log2 ) or 0 if value in log2 is 0
+| 123 | 1 | | Number of inodes per block in log2 +
+Where value = ( 2 ^ value in log2 ) or 0 if value in log2 is 0
+| 124 | 1 | | Allocation group size in log2 +
+Where value = ( 2 ^ value in log2 ) or 0 if value in log2 is 0
+| 125 | 1 | | Number of real-time (device) extents in log2 +
+Where value = ( 2 ^ value in log2 ) or 0 if value in log2 is 0
+| 126 | 1 | | Creation flag +
+Value to indicate file system is being created
+| 127 | 1 | | Inodes percentage +
+Contains the percentage of the maximum space of the volume to use for inodes
+4+| _Only used in the first superblock_
+| 128 | 8 | | Number of inodes
+| 136 | 8 | | Number of free inodes
+| 144 | 8 | | Number of free data blocks
+| 152 | 8 | | Number of free real-time extents
+4+| _Only used if the XFS_SB_VERSION_QUOTABIT feature flag is set_
+| 160 | 8 | | User quota inode number
+| 168 | 8 | | Group (or project) quota inode number
+| 176 | 2 | | Quota flags +
+See sction: <<quota_flags,Quota flags>>
+4+| _Common_
+| 178 | 1 | | Miscellaneous flags +
+See sction: <<miscellaneous_flags,Miscellaneous flags>>
+| 179 | 1 | 0 | [yellow-background]*Unknown (reserved or shared version number)*
+4+| _Only used if the XFS_SB_VERSION_ALIGNBIT feature flag is set_
+| 180 | 4 | | Inode chunk alignment size +
+Contains number of blocks
+4+| _Common_
+| 184 | 4 | | Stripe or RAID unit size +
+Contains number of blocks
+| 188 | 4 | | Stripe of RAID width +
+Contains number of blocks
+| 192 | 1 | | Directory block size in log2
+| 193 | 1 | | Journal device sector size in log2
+| 194 | 2 | | Journal device sector size (in bytes)
+4+| _Only used if the XFS_SB_VERSION_LOGV2BIT feature flag is set_
+| 196 | 4 | | Journal device stripe or RAID unit size
+4+| _Common_
+| 200 | 4 | | Secondary feature flags +
+See section: <<secondary_feature_flags,Secondary feature flags>>
+| 204 | 4 | | Copy of secondary feature flags +
+Introduced to work-around 64-bit alignment errors +
+See section: <<secondary_feature_flags,Secondary feature flags>>
+4+| _If file system version >= 5_
+| 208 | 4 | | (Read-write) compatible feature flags +
+See section: <<compatible_feature_flags,Compatible feature flags>>
+| 212 | 4 | | Read-only compatible feature flags +
+See section: <<read_only_compatible_feature_flags,Read-only compatible feature flags>>
+| 216 | 4 | | (Read-write) incompatible feature flags +
+See section: <<incompatible_feature_flags,Incompatible feature flags>>
+| 220 | 4 | | Journal (read-write) incompatible feature flags +
+See section: <<journal_incompatible_feature_flags,Journal incompatible feature flags>>
+| 224 | 4 | | Checksum of the superblock
+| 228 | 4 | | [yellow-background]*Unknown (Sparse inode chunk alignment in number of blocks)*
+| 232 | 4 | | Project quota inode number
+| 240 | 8 | | Journal log sequence number (LSN) of the last superblock update
+4+| _Only used if the XFS_SB_FEAT_INCOMPAT_META_UUID incompatible feature flag is set_
+| 248 | 16 | | Metadata identifier +
+Contains an UUID
+4+| _Only used if the XFS_SB_FEAT_RO_COMPAT_RMAPBT incompatible feature flag is set_
+| 264 | 8 | | Real-time Reverse Mapping B+tree inode number
+|===
+
+[NOTE]
+Allocation group size and allocation group size in log2 are not necessarily
+equivalent.
+
+=== [[feature_flags]]Feature flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x0010 | XFS_SB_VERSION_ATTRBIT | Inodes support extended attributes
+| 0x0020 | XFS_SB_VERSION_NLINKBIT | Inodes has 32-bit number of links value
+| 0x0040 | XFS_SB_VERSION_QUOTABIT | Quotas enabled
+| 0x0080 | XFS_SB_VERSION_ALIGNBIT | Use inode chunk alignment
+| 0x0100 | XFS_SB_VERSION_DALIGNBIT | Has underlying stripe or RAID
+| 0x0200 | XFS_SB_VERSION_SHAREDBIT | [yellow-background]*Unknown (set if reserved shared version is used)*
+| 0x0400 | XFS_SB_VERSION_LOGV2BIT | Has version 2 journaling logs
+| 0x0800 | XFS_SB_VERSION_SECTORBIT | Sector size is not 512 bytes
+| 0x1000 | XFS_SB_VERSION_EXTFLGBIT | Unwritten extents are used +
+Should always be set.
+| 0x2000 | XFS_SB_VERSION_DIRV2BIT | Version 2 directories are used +
+Should always be set.
+| 0x4000 | XFS_SB_VERSION_BORGBIT | [yellow-background]*Unknown (ASCII only case-insensitive)*
+| 0x8000 | XFS_SB_VERSION_MOREBITSBIT | Secondary feature flags are used
+|===
+
+=== [[secondary_feature_flags]]Secondary feature flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x00000001 | XFS_SB_VERSION2_RESERVED1BIT | [yellow-background]*Unknown (reserved)*
+| 0x00000002 | XFS_SB_VERSION2_LAZYSBCOUNTBIT | Has lazy global counters +
+Free space and inode values are only tracked in the primary superblock
+| 0x00000004 | XFS_SB_VERSION2_RESERVED4BIT | [yellow-background]*Unknown (reserved)*
+| 0x00000008 | XFS_SB_VERSION2_ATTR2BIT | Version 2 extended attributes are used
+| 0x00000010 | XFS_SB_VERSION2_PARENTBIT | Inodes have a parent pointer
+3+|
+| 0x00000080 | XFS_SB_VERSION2_PROJID32BIT | Has 32-bit project identifiers
+| 0x00000100 | XFS_SB_VERSION2_CRCBIT | Has metadata checksums
+| 0x00000200 | XFS_SB_VERSION2_FTYPE | Directory entries contain a file type
+|===
+
+=== [[miscellaneous_flags]]Miscellaneous flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x01 | XFS_SBF_READONLY | Read-only file system
+|===
+
+=== [[quota_flags]]Quota flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x0001 | XFS_UQUOTA_ACCT | User quota accounting is enabled
+| 0x0002 | XFS_UQUOTA_ENFD | User quotas are enforced
+| 0x0004 | XFS_UQUOTA_CHKD | User quotas have been checked and updated on disk
+| 0x0008 | XFS_PQUOTA_ACCT | Project quota accounting is enabled
+| 0x0010 | XFS_OQUOTA_ENFD | Other (group/project) quotas are enforced
+| 0x0020 | XFS_OQUOTA_CHKD | Other (group/project) quotas have been checked
+| 0x0040 | XFS_GQUOTA_ACCT | Group quota accounting is enabled
+| 0x0080 | XFS_GQUOTA_ENFD | Group quotas are enforced
+| 0x0100 | XFS_GQUOTA_CHKD | Group quotas have been checked
+| 0x0200 | XFS_PQUOTA_ENFD | Project quotas are enforced
+| 0x0400 | XFS_PQUOTA_CHKD | Project quotas have been checked
+|===
+
+=== [[compatible_feature_flags]]Compatible feature flags
+
+Current no compatible feature flags are defined
+
+=== [[read_only_compatible_feature_flags]]Read-only compatible feature flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x00000001 | XFS_SB_FEAT_RO_COMPAT_FINOBT |
+| 0x00000002 | XFS_SB_FEAT_RO_COMPAT_RMAPBT |
+| 0x00000004 | XFS_SB_FEAT_RO_COMPAT_REFLINK |
+|===
+
+=== [[incompatible_feature_flags]]Incompatible feature flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x00000001 | XFS_SB_FEAT_INCOMPAT_FTYPE |
+| 0x00000002 | XFS_SB_FEAT_INCOMPAT_SPINODES |
+| 0x00000004 | XFS_SB_FEAT_INCOMPAT_META_UUID | Use a metadata identifier
+|===
+
+=== [[journal_incompatible_feature_flags]]Journal incompatible feature flags
+
+Current no journal incompatible feature flags are defined
+
+== Free block information
+
+The free block information stores references:
+
+* the block offset B+ tree, that tracks the free space by block number
+* the block count B+ tree, that tracks the size of the free space block
+
+The free block information (xfs_agf_t) is 64 or 224 bytes of size and
+consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | "XAGF" | Signature
+| 4 | 4 | 1 | Version
+| 8 | 4 | | Sequence number +
+Contains the allocation group number of the corresponding sector
+| 12 | 4 | | [yellow-background]*Unknown (Allocation group size)* +
+Contains number of blocks
+| 16 | 4 | | Free space counts B+ tree root block number
+| 20 | 4 | | Free space sizes B+ tree root block number
+| 24 | 4 | | [yellow-background]*Unknown (reserved)*
+| 28 | 4 | | Free space counts B+ tree height/depth
+| 32 | 4 | | Free space sizes B+ tree height/depth
+| 36 | 4 | | [yellow-background]*Unknown (reserved)*
+| 40 | 4 | | Index of the first "free list" block
+| 44 | 4 | | Index of the last "free list" block
+| 48 | 4 | | "Free list" size +
+Contains number of blocks
+| 52 | 4 | | Number of free blocks in the allocation group
+| 56 | 4 | | Longest contiguous free space in the allocation group +
+Contains number of blocks
+4+| _Only used if the XFS_SB_VERSION2_LAZYSBCOUNTBIT feature flag is set_
+| 60 | 4 | | Number of blocks used for the free space B+ trees
+4+| _If file system version >= 5_
+| 64 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 80 | 4 | | [yellow-background]*Unknown (Size of the reverse mapping B+ tree in blocks)*
+| 84 | 4 | | [yellow-background]*Unknown (Size of the reference count B+ tree in blocks)*
+| 88 | 4 | | Reverse mapping B+ tree root block number +
+Contains a block number relative to the start of the allocation group
+| 92 | 4 | | Reference count B+ tree root block number +
+Contains a block number relative to the start of the allocation group
+| 96 | 14 x 8 | | [yellow-background]*Unknown (reserved)*
+| 208 | 8 | | Log sequence number
+| 216 | 4 | | [yellow-background]*Unknown (Checksum of the free sector)*
+| 220 | 4 | | [yellow-background]*Unknown (reserved)*
+|===
+
+== Free list
+
+A free list consists of:
+
+* As of version 5, free list header
+* Array of free block numbers
+
+=== Free list header
+
+The free list header is 36 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | "AGFL" | Signature
+| 4 | 4 | | Sequence number +
+Contains the allocation group number of the corresponding sector
+| 8 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 24 | 8 | | Log sequence number
+| 32 | 4 | | Checksum
+|===
+
+[yellow-background]*TODO describe sb_uuid or sb_meta_uuid*
+
+== Inode information
+
+The inode information (xfs_agi_t) is 296 or 336 bytes of size and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | "XAGI" | Signature
+| 4 | 4 | 1 | Version
+| 8 | 4 | | Sequence number +
+Contains the allocation group number of the corresponding sector
+| 12 | 4 | | [yellow-background]*Unknown (Allocation group size)* +
+Contains number of blocks
+| 16 | 4 | | Number of inodes in the allocation group
+| 20 | 4 | | Inode B+ tree root block number +
+Contains a block number relative to the start of the allocation group
+| 24 | 4 | | Inode B+ tree height/depth
+| 28 | 4 | | Number of unused (free) inodes in the allocation group
+| 32 | 4 | | First inode number of the last allocated inode chunk +
+Contains an inode number relative to the allocation group
+| 36 | 4 | -1 (0xffffffff) | [yellow-background]*Unknown (deprecated)*
+| 40 | 64 x 4 | | Hash table of unlinked (deleted) inodes that are still being referenced +
+Contains -1 (0xffffffff) if not set
+4+| _If file system version >= 5_
+| 296 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 312 | 4 | | Checksum
+| 316 | 4 | | [yellow-background]*Unknown (padding)*
+| 320 | 8 | | Log sequence number
+| 328 | 4 | | Free inode B+ tree root block number +
+Contains a block number relative to the start of the allocation group
+| 332 | 4 | | Free inode B+ tree height/depth
+|===
+
+== B+ tree
+
+XFS uses B+ trees to store various types of information. There are 2 different
+types of B+ trees, namely:
+
+* Free space block B+ tree
+* Inode B+ tree
+* Reference count B+ tree
+
+=== [[btree_block]]B+ tree block
+
+A B+ tree block consists of:
+
+* B+ tree block header
+* Array of branch or leaf block records
+
+=== [[btree_block_header]]B+ tree block header
+
+==== [[btree_block_header_32bit]]B+ tree block header 32-bit
+
+The B+ tree block header 32-bit (xfs_btree_sblock_t or xfs_btree_iblock_t) is
+16 or 56 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Signature
+| 4 | 2 | | Level (or depth/height) +
+Contains 0 for a leaf block
+| 6 | 2 | | Number of records
+| 8 | 4 | | Previous B+ tree block number +
+Contains a block number relative to the start of the allocation group or -1 (0xffffffff) if not set
+| 12 | 4 | | Next B+ tree block number +
+Contains a block number relative to the start of the allocation group or -1 (0xffffffff) if not set
+4+| _If file system version >= 5_
+| 16 | 8 | | Block number
+| 24 | 8 | | Log sequence number
+| 32 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 48 | 4 | | Owner allocation group +
+Contains the allocation group the block is part of
+| 52 | 4 | | Checksum
+|===
+
+==== [[btree_block_header_64bit]]B+ tree block header 64-bit
+
+The B+ tree block header 64-bit (xfs_btree_lblock_t) is 24 or 68 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Signature
+| 4 | 2 | | Level (or depth/height) +
+Contains 0 for a leaf block
+| 6 | 2 | | Number of records
+| 8 | 8 | | Previous B+ tree block number +
+Contains -1 (0xffffffff) if not set
+| 16 | 8 | | Next B+ tree block number +
+Contains -1 (0xffffffff) if not set
+4+| _If file system version >= 5_
+| 24 | 8 | | Block number
+| 32 | 8 | | Log sequence number
+| 40 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 56 | 8 | | Owner allocation group +
+Contains the allocation group the block is part of
+| 64 | 4 | | Checksum
+| 64 | 4 | 0 | [yellow-background]*Unknown (padding)*
+|===
+
+=== B+ tree block extended header
+
+* [yellow-background]*TODO: determine where this is defined, it seems to be
+represented in the examples.*
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+|===
+
+==== B+ tree block header signatures
+
+[cols="1,5",options="header"]
+|===
+| Signature | Description
+| "AB3B" | File system version 5 free space block offset B+ tree
+| "AB3C" | File system version 5 free space block count B+ tree
+| "ABTB" | Free space block offset B+ tree
+| "ABTC" | Free space block count B+ tree
+| "FIB3" | File system version 5 free inode B+tree
+| "FIBT" | Free inode B+tree
+| "IAB3" | File system version 5 (allocated) inode B+tree
+| "IABT" | (Allocated) inode B+tree
+| "R3FC" | File system version 5 reference count B+ tree
+|===
+
+=== Free space B+ tree
+
+[yellow-background]*TODO describe*
+
+==== Free space B+ tree branch node record
+
+The free space B+ tree branch node record (xfs_alloc_ptr_t) is 4 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | [yellow-background]*Unknown*
+|===
+
+==== Free space B+ tree leaf node record
+
+The free space B+ tree leaf node record (xfs_alloc_key_t) is 8 bytes of size and
+consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | [yellow-background]*Unknown (ar_startblock)*
+| 4 | 4 | | [yellow-background]*Unknown (ar_blockcount)*
+|===
+
+=== Inode B+ tree
+
+The inode B+ tree uses the <<btree_block_header_32bit,B+ tree block header 32-bit>>.
+
+==== Inode B+ tree branch node
+
+The inode B+ tree branch node consists of:
+
+* node header
+* array of inode B+ tree branch node entry keys
+* array of inode B+ tree branch node entry values
+
+The number of key-value pairs is calculated as following:
+
+....
+number of key-value pairs = node records data size / 8
+....
+
+===== Inode B+ tree branch node key
+
+The inode B+ tree branch node key (xfs_inobt_key_t) is 4 bytes of size and
+consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Number of the first inode in the branch +
+Contains an inode number relative to the allocation group
+|===
+
+[NOTE]
+The inode number of the last key can be 0.
+
+===== Inode B+ tree branch node value
+
+The inode B+ tree branch node key is 4 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Block number of the inode B+ tree sub node +
+Contains a block number relative to the start of the allocation group
+|===
+
+==== Inode B+ tree leaf node record
+
+The inode B+ tree leaf node record (xfs_inobt_rec_t) is 16 bytes of size and
+consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Number of the first inode of the inode chunk +
+Contains an inode number relative to the allocation group
+| 4 | 4 | | Number of unused (free) inodes of the inode chunk
+| 8 | 8 | | Inode chunk allocation bitmap +
+Bitmap to indicated which inodes of the inode chunk are unused (free)
+|===
+
+The inode chunk is a group of 64 inodes. The file offset of the inode chunk
+is calculated as following:
+
+....
+file offset = allocation group file offset + ( inode number x inode size )
+....
+
+== Inode
+
+The inode can be followed by:
+
+* data fork (descriptor)
+** device identifier (fork type is XFS_DINODE_FMT_DEV)
+** inline data fork (fork type is XFS_DINODE_FMT_LOCAL)
+** extent list data fork (fork type is XFS_DINODE_FMT_EXTENTS)
+** extent B+ tree data fork (fork type is XFS_DINODE_FMT_BTREE)
+* optional (extended) attributes data fork (descriptor)
+** inline attributes fork (fork type is XFS_DINODE_FMT_LOCAL)
+** extent list attributes fork (fork type is XFS_DINODE_FMT_EXTENTS)
+** extent B+ tree attributes fork (fork type is XFS_DINODE_FMT_BTREE)
+
+=== Inode version 1
+
+The inode version 1 (xfs_dinode_core_t) is 96 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | "IN" | Signature
+| 2 | 2 | | File mode +
+Contains file type and permissions +
+See section: <<file_mode,File mode>>
+| 4 | 1 | 1 | Format version
+| 5 | 1 | | (Data) fork type +
+See section: <<fork_type,Fork type>>
+| 6 | 2 | | Number of links
+| 8 | 4 | | Owner (or user) identifier (UID)
+| 12 | 4 | | Group identifier (GID)
+| 16 | 14 | 0 | [yellow-background]*Unknown (padding)*
+| 30 | 2 | | Flush counter +
+Contains a value that is incremented on flush
+| 32 | 4 | | (last) access time +
+Contains a POSIX timestamp in seconds
+| 36 | 4 | | (last) access time fraction of second +
+Contains number of nano seconds
+| 40 | 4 | | (last) modification time +
+Contains a POSIX timestamp in seconds
+| 44 | 4 | | (last) modification time fraction of second +
+Contains number of nano seconds
+| 48 | 4 | | (last) inode change time +
+Contains a POSIX timestamp in seconds
+| 52 | 4 | | (last) inode change time fraction of second +
+Contains number of nano seconds
+| 56 | 8 | | (Data) size
+| 64 | 8 | | Number of (data) blocks
+| 72 | 4 | | Extent size
+| 76 | 4 | | Number of data extents
+| 80 | 2 | | Number of (extended) attributes extents +
+Can contain 0 if an attributes fork of type XFS_DINODE_FMT_EXTENTS is empty
+| 82 | 1 | | (Extended) attributes fork descriptor offset +
+Contains an offset (value x 8) relative to the end of the inode
+| 83 | 1 | | (Extended) attributes fork type
+| 84 | 4 | | [yellow-background]*Unknown (DMAPI event mask)*
+| 88 | 2 | | [yellow-background]*Unknown (DMAPI state)*
+| 90 | 2 | | Inode flags
+| 92 | 4 | | Generation number
+|===
+
+=== Inode version 2
+
+The inode version 2 (xfs_dinode_core_t) is 96 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | "IN" | Signature
+| 2 | 2 | | File mode +
+Contains file type and permissions +
+See section: <<file_mode,File mode>>
+| 4 | 1 | 2 | Format version
+| 5 | 1 | | (Data) fork type +
+See section: <<fork_type,Fork type>>
+| 6 | 2 | | [yellow-background]*Unknown*
+| 8 | 4 | | Owner (or user) identifier (UID)
+| 12 | 4 | | Group identifier (GID)
+| 16 | 4 | | Number of links
+| 20 | 2 | | Project identifier
+| 22 | 8 | 0 | [yellow-background]*Unknown (padding)*
+| 30 | 2 | | Flush counter +
+Contains a value that is incremented on flush
+| 32 | 4 | | (last) access time +
+Contains a POSIX timestamp in seconds
+| 36 | 4 | | (last) access time fraction of second +
+Contains number of nano seconds
+| 40 | 4 | | (last) modification time +
+Contains a POSIX timestamp in seconds
+| 44 | 4 | | (last) modification time fraction of second +
+Contains number of nano seconds
+| 48 | 4 | | (last) inode change time +
+Contains a POSIX timestamp in seconds
+| 52 | 4 | | (last) inode change time fraction of second +
+Contains number of nano seconds
+| 56 | 8 | | (Data) size
+| 64 | 8 | | Number of (data) blocks
+| 72 | 4 | | Extent size
+| 76 | 4 | | Number of data extents
+| 80 | 2 | | Number of (extended) attributes extents +
+Can contain 0 if an attributes fork of type XFS_DINODE_FMT_EXTENTS is empty
+| 82 | 1 | | (Extended) attributes fork descriptor offset +
+Contains an offset (value x 8) relative to the end of the inode
+| 83 | 1 | | (Extended) attributes fork type
+| 84 | 4 | | [yellow-background]*Unknown (DMAPI event mask)*
+| 88 | 2 | | [yellow-background]*Unknown (DMAPI state)*
+| 90 | 2 | | Inode flags
+| 92 | 4 | | Generation number
+4+| _Non-inode core field_
+| 96 | 4 | | [yellow-background]*Unknown (next unlinked inode)*
+|===
+
+=== Inode version 3
+
+The inode version 3 (xfs_dinode_core_t) is 176 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | "IN" | Signature
+| 2 | 2 | | File mode +
+Contains file type and permissions +
+See section: <<file_mode,File mode>>
+| 4 | 1 | 3 | Format version
+| 5 | 1 | | (Data) fork type +
+See section: <<fork_type,Fork type>>
+| 6 | 2 | | [yellow-background]*Unknown*
+| 8 | 4 | | Owner (or user) identifier (UID)
+| 12 | 4 | | Group identifier (GID)
+| 16 | 4 | | Number of links
+| 20 | 2 | | Project identifier
+| 22 | 8 | 0 | [yellow-background]*Unknown (padding)*
+| 30 | 2 | | Flush counter +
+Contains a value that is incremented on flush
+| 32 | 4 | | (last) access time +
+Contains a POSIX timestamp in seconds
+| 36 | 4 | | (last) access time fraction of second +
+Contains number of nano seconds
+| 40 | 4 | | (last) modification time +
+Contains a POSIX timestamp in seconds
+| 44 | 4 | | (last) modification time fraction of second +
+Contains number of nano seconds
+| 48 | 4 | | (last) inode change time +
+Contains a POSIX timestamp in seconds
+| 52 | 4 | | (last) inode change time fraction of second +
+Contains number of nano seconds
+| 56 | 8 | | (Data) size
+| 64 | 8 | | Number of (data) blocks
+| 72 | 4 | | Extent size
+| 76 | 4 | | Number of data extents
+| 80 | 2 | | Number of (extended) attributes extents +
+Can contain 0 if an attributes fork of type XFS_DINODE_FMT_EXTENTS is empty
+| 82 | 1 | | (Extended) attributes fork descriptor offset +
+Contains an offset (value x 8) relative to the end of the inode
+| 83 | 1 | | (Extended) attributes fork type
+| 84 | 4 | | [yellow-background]*Unknown (DMAPI event mask)*
+| 88 | 2 | | [yellow-background]*Unknown (DMAPI state)*
+| 90 | 2 | | Inode flags +
+See section: <<inode_flags,Inode flags>>
+| 92 | 4 | | Generation number
+4+| _Pre version 3 non-inode core field_
+| 96 | 4 | | [yellow-background]*Unknown (next unlinked inode)*
+4+| _Introduced in version 3_
+| 100 | 4 | | Checksum
+| 104 | 8 | | Change count +
+Contains the number of changes made to the inode
+| 112 | 8 | | Log sequence number
+| 120 | 8 | | Extended inode flags
+| 128 | 4 | | Copy-on-write (COW) extent size
+| 132 | 12 | | [yellow-background]*Unknown (padding)*
+| 144 | 4 | | Creation time +
+Contains a POSIX timestamp in seconds
+| 148 | 4 | | Creation time fraction of second +
+Contains number of nano seconds
+| 152 | 8 | | Inode number +
+Contains an absolute inode number
+| 160 | 16 | | Inode type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+|===
+
+=== [[file_mode]]File mode
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+3+| _Access other_ +
+_Bitmask: 0x0007 (S_IRWXO)_
+| 0x0001 | S_IXOTH | X-access for other
+| 0x0002 | S_IWOTH | W-access for other
+| 0x0004 | S_IROTH | R-access for other
+3+| _Access group_ +
+_Bitmask: 0x0038 (S_IRWXG)_
+| 0x0008 | S_IXGRP | X-access for group
+| 0x0010 | S_IWGRP | W-access for group
+| 0x0020 | S_IRGRP | R-access for group
+3+| _Access owner (or user)_ +
+_Bitmask: 0x01c0 (S_IRWXU)_
+| 0x0040 | S_IXUSR | X-access for owner (or user)
+| 0x0080 | S_IWUSR | W-access for owner (or user)
+| 0x0100 | S_IRUSR | R-access for owner (or user)
+3+| _Other_
+| 0x0200 | S_ISTXT | Sticky bit
+| 0x0400 | S_ISGID | Set group identifer (GID) on execution
+| 0x0800 | S_ISUID | Set owner (or user) identifer (UID) on execution
+3+| _Type of file_ +
+_Bitmask: 0xf000 (S_IFMT)_
+| 0x1000 | S_IFIFO | Named pipe (FIFO)
+| 0x2000 | S_IFCHR | Character device
+| 0x4000 | S_IFDIR | Directory
+| 0x6000 | S_IFBLK | Block device
+| 0x8000 | S_IFREG | Regular file
+| 0xa000 | S_IFLNK | Symbolic link
+| 0xc000 | S_IFSOCK | Socket
+|===
+
+=== [[fork_type]]Fork type
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0 | XFS_DINODE_FMT_DEV | Device identifier is stored inline (in the inode)
+| 1 | XFS_DINODE_FMT_LOCAL | Data is stored inline (in the inode)
+| 2 | XFS_DINODE_FMT_EXTENTS | Data is referrenced by extents stored in an extent list +
+See section: <<extent_list,Extent list>>
+| 3 | XFS_DINODE_FMT_BTREE | Data is referrence by extents stored in an extents B+ tree +
+See section: <<extent_btree,Extent B+ tree>>
+| 4 | XFS_DINODE_FMT_UUID | [yellow-background]*Unknown (currently not used)*
+| 5 | XFS_DINODE_FMT_RMAP | Data is referrence by a reverse mapping
+|===
+
+=== [[inode_flags]]Inode flags
+
+[cols="1,1,5",options="header"]
+|===
+| Value | Identifier | Description
+| 0x0001 | XFS_DIFLAG_REALTIME | The data is located on the real-time device
+| 0x0002 | XFS_DIFLAG_PREALLOC | The extents have been preallocated
+| 0x0004 | XFS_DIFLAG_NEWRTBM | Uses the new real-time bitmap format
+| 0x0008 | XFS_DIFLAG_IMMUTABLE | Immutable (cannot be modified)
+| 0x0010 | XFS_DIFLAG_APPEND | Append only
+| 0x0020 | XFS_DIFLAG_SYNC | Use synchronous write
+| 0x0040 | XFS_DIFLAG_NOATIME | Do not update access time (atime)
+| 0x0080 | XFS_DIFLAG_NODUMP | Do not "dump" +
+Indicates that xfsdump should ignore the file
+| 0x0100 | XFS_DIFLAG_RTINHERIT | Sub directories inherit XFS_DIFLAG_REALTIME
+| 0x0200 | XFS_DIFLAG_PROJINHERIT | Sub directories inherit the project identifier
+| 0x0400 | XFS_DIFLAG_NOSYMLINKS | No symbolic links can be created for sub directories
+| 0x0800 | XFS_DIFLAG_EXTSIZE | Has extent size
+| 0x1000 | XFS_DIFLAG_EXTSZINHERIT | Sub directories inherit extent size
+| 0x2000 | XFS_DIFLAG_NODEFRAG | Do not defragment
+| 0x4000 | XFS_DIFLAG_FILESTREAM | [yellow-background]*Unknown (Use filestream allocator)*
+|===
+
+....
+XFS_DIFLAG_NEWRTBM Specifies the sb_rbmino uses the new real-time bitmap format
+....
+
+=== [[extent_list]]Extent list
+
+The extent list consists of:
+
+* one or more <<packed_extent,packed extents>>
+
+==== [[packed_extent]]Packed extent
+
+The packed extent (xfs_bmbt_rec_t) is 128 bits of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 21 bits | | Number of blocks
+| 2.4 | 52 bits | | Physical block number +
+Contains a file system block number +
+See section: <<file_system_block_number,File system block number>>
+| 9.1 | 54 bits | | Logical block number
+| 15.7 | 1 bit | | Uninitialized (unwritten) extent
+|===
+
+=== [[extent_btree]]Extent B+ tree
+
+==== Extent B+ tree root node
+
+The root node of the extents B+ tree is stored in the inode and equivalent to a
+<<extent_btree_branch_node,Extent B+ tree branch node>>.
+
+The number of key-value pairs is calculated as following:
+
+....
+number of key-value pairs = ( node data size - 4 ) / 16
+....
+
+Where "node data size" is ( "attributes fork descriptor offset" x 8 ) if the
+value is not 0, or otherwise the remaining inode block size.
+
+==== Extent B+ tree sub node block
+
+An extent B+ tree sub nodes is stored in a <<btree_block,B+ tree block>>.
+
+The inode B+ tree uses the <<btree_block_header_64bit,B+ tree block header 64-bit>>.
+
+===== Extent B+ tree sub node block header
+
+The sub node block header (xfs_bmbt_block_t) is equivalent to
+<<btree_block_header,B+ tree block header>>.
+
+===== Extent B+ tree sub node block header signatures
+
+[cols="1,5",options="header"]
+|===
+| Signature | Description
+| "BMA3" | File system version 5 extent B+ tree sub node block
+| "BMAP" | Extent B+ tree sub node block
+|===
+
+==== [[extent_btree_branch_node]]Extent B+ tree branch node
+
+The extent B+ tree branch node record consists of:
+
+* node header
+* array of extent B+ tree branch node entry keys
+* array of extent B+ tree branch node entry values
+
+[yellow-background]*TODO number of key-value pairs*
+
+The number of key-value pairs is calculated as following:
+
+....
+number of key-value pairs = node records data size / 16
+....
+
+===== Extent B+ tree branch node header
+
+The branch node header (xfs_bmdr_block_t) is 4 byte of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | | Node level
+| 2 | 2 | | Number of used key-value pairs in the node
+|===
+
+===== Extent B+ tree branch node entry key
+
+The branch node entry key (xfs_bmbt_key_t) is 8 byte of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 8 | | Data offset
+|===
+
+===== Extent B+ tree branch node entry value
+
+The branch node entry value (xfs_bmbt_ptr_t or xfs_bmdr_ptr_t) is 8 byte of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 8 | | Block number of the extent B+ tree sub node +
+Contains a file system block number +
+See section: <<file_system_block_number,File system block number>>
+|===
+
+==== Extent B+ tree leaf block node
+
+The extent B+ tree leaf block node consists of:
+
+* one or more <<packed_extent,packed extents>>
+
+== Directory entries
+
+Directories entries are stored in the data fork of a directory inode. The
+directory entries can be stored in multiple ways:
+
+* as a short-form directory table
+* as an extent-based block directory (or leaf directory)
+* as an extent-based directory B+ tree (or node directory)
+
+=== Short-form directory table
+
+The short-form directory table (xfs_dir2_sf_t) is stored in the inode (as inline
+data), where fork type is XFS_DINODE_FMT_LOCAL. The short-form directory table
+consist of:
+
+* Short-form directory table header
+* Short-form directory table entries
+
+==== Short-form directory table header version 2
+
+The short-form directory table header version 2 (xfs_dir2_sf_hdr_t) is 6 or 10
+bytes of size and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 1 | | Number of 32-bit entries
+| 1 | 1 | | Number of 64-bit entries
+| 2 | 4 or 8 | | Parent inode number +
+Contains an absolute inode number
+|===
+
+[NOTE]
+If the inode numbers are stored as 32-bit values then number of 32-bit entries
+is set and number of 64-bit entries must be 0. If the inode numbers are stored
+as 64-bit values then number of 64-bit entries is set and number of 32-bit
+entries must be 0.
+
+==== Short-form directory table entry version 2
+
+The short-form directory table entry version 2 (xfs_dir2_sf_entry_t) is variable
+of size and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 1 | | Name size +
+Does not include the end-of-string character
+| 1 | 2 | | [yellow-background]*Unknown (offset, tag)*
+| 3 | ... | | Name
+4+| _Only present if XFS_SB_VERSION2_FTYPE is set_
+| ... | 1 | | File type
+4+| _Common_
+| ... | 4 or 8 | | Inode number +
+Contains an absolute inode number
+|===
+
+[NOTE]
+File type seems to be present on format version even if XFS_SB_VERSION2_FTYPE
+is not set.
+
+=== Block directory
+
+A block directory (xfs_dir2_block_t) consist of one or more blocks that consist
+of:
+
+* a block directory header
+* array of used and unused directory entries
+* hash values of the entries
+* a block directory footer
+
+==== Block directory header
+
+===== Block directory header version 2
+
+The block directory header version 2 (xfs_dir2_data_hdr_t) is 16 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | "XD2B" | Signature
+| 4 | 4 x 3 | | Array of free regions in the block +
+See section: <<block_free_region_v2,Block free region>>
+|===
+
+===== Block directory header version 3
+
+The block directory header version 3 (xfs_dir3_data_hdr_t) is 48 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+4+| _Block header_
+| 0 | 4 | "XDB3" | Signature
+| 4 | 4 | | Checksum
+| 8 | 8 | | Block number
+| 16 | 8 | | Log sequence number
+| 24 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 40 | 8 | | Owner inode number +
+Contains the absolute inode number the block is part of
+4+|
+| 48 | 4 x 3 | | Array of free regions in the block +
+See section: <<block_free_region_v2,Block free region>>
+| 60 | 4 | | [yellow-background]*Unknown (padding)*
+|===
+
+===== [[block_free_region_v2]]Block free region version 2
+
+The block free region version 2 (xfs_dir2_data_free_t) is 4 bytes of size and
+consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | | Offset +
+Contains the offset of the free region relative to the start of the directory block
+| 2 | 2 | | Size
+|===
+
+==== Block directory entries
+
+===== Block directory entry version 2
+
+The block directory entry version 2 (xfs_dir2_data_entry_t) is variable of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 8 | | Inode number +
+Contains an absolute inode number
+| 8 | 1 | | Name size +
+Does not include the end-of-string character
+| 9 | ... | | Name
+4+| _Only present if XFS_SB_VERSION2_FTYPE is set_
+| ... | 1 | | [yellow-background]*Unknown (ftype)*
+4+| _Common_
+| ... | ... | | [yellow-background]*Unknown (8-byte alignment padding?)*
+| ... | 2 | | [yellow-background]*Unknown (offset, tag)*
+|===
+
+===== Unused block directory entry version 2
+
+The unused block directory entry version 2 (xfs_dir2_data_unused_t) is variable of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | 0xffff | Signature (free tag)
+| 2 | 4 | | Entry size +
+Contains the size of the unused block including the size of the signature and entry size
+| 4 | 2 | | [yellow-background]*Unknown (padding)*
+| ... | 2 | | [yellow-background]*Unknown (offset, tag)*
+|===
+
+==== Block directory hash value
+
+===== Block directory hash value version 2
+
+The block directory hash value version 2 (xfs_dir2_leaf_entry_t) is 8 bytes of
+size and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Hash value of the name of the directory entry
+| 4 | 4 | | Entry offset +
+The offset is relative to the start of the block
+|===
+
+==== Block directory footer
+
+===== Block directory footer version 2
+
+The block directory footer version 2 (xfs_dir2_block_tail_t) is 8 bytes of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Number of directory entries
+| 4 | 4 | | Number of unused entries
+|===
+
+=== Directory B+ tree
+
+The directory B+ tree uses different offset ranges to reference different
+types of extents:
+
+[cols="1,1,5",options="header"]
+|===
+| Range | Identifier | Description
+| 0 - 32 GiB | | Directory entries (or data) extents
+| 32 - 64 GiB | XFS_DIR2_LEAF_OFFSET | Hash values (or leaf) extents
+| 64 - ... GiB | | Directory free space B+ tree
+|===
+
+==== Directory B+ tree block header signatures
+
+[cols="1,5",options="header"]
+|===
+| Signature | Description
+| "XD2D" | Directory entries B+ tree
+| "XD2F" | Directory free space B+ tree
+| "XDD3" | File system version 5 Directory entries B+ tree
+| "XDF3" | File system version 5 Directory free space B+ tree
+|===
+
+==== Directory B+ tree directory entries block
+
+A directory B+ tree directory entries block (xfs_dir2_data_t) consist of:
+
+* an directory entries block header
+* array of used and unused directory entries
+
+[yellow-background]*TODO complete section*
+
+==== Directory entries B+ tree hash values block
+
+A directory entries B+ tree hash values block (xfs_dir2_leaf_entry_t) consist
+of:
+
+* a hash values block header
+* array of entries (xfs_dir2_leaf_entry_t)
+* array of entries (xfs_dir2_data_off_t)
+* a hash values block footer
+
+[yellow-background]*TODO complete section*
+
+===== Directory entries B+ tree hash values block header
+
+A hash values block header version 1 (xfs_da_blkinfo_t) is 12 bytes of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | (Logical) block number of the next B+ tree block at the same level
+| 4 | 4 | | (Logical) block number of the previous B+ tree block at the same level
+| 8 | 2 | 0xfbee | Signature (XFS_ATTR_LEAF_MAGIC)
+| 10 | 2 | | [yellow-background]*Unknown (padding)*
+|===
+
+[yellow-background]*TODO describe xfs_dir2_leaf_entry_t and xfs_dir2_data_off_t*
+
+===== Directory entries B+ tree hash values block footer
+
+A hash values block footer version 2 (xfs_dir2_leaf_tail_t) is 4 bytes of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | [yellow-background]*Unknown (bestcount)*
+|===
+
+== Device identifier
+
+Character and block devices identifiers are stored as inline data with fork
+type is XFS_DINODE_FMT_DEV.
+
+The device identifier (xfs_dev_t) is 4 bytes of size and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0.0 | 18 bits | | Minor device number
+| 2.2 | 14 bits | | Major device number
+|===
+
+== File content
+
+XFS supports multiple ways to store file content:
+
+* inline data (fork type is XFS_DINODE_FMT_LOCAL)
+* extents defined by either an extent list (fork type is XFS_DINODE_FMT_EXTENTS) or an extent B+ tree (fork type is XFS_DINODE_FMT_BTREE)
+
+=== Inline data
+
+The file content data is stored in the inode data fork.
+
+=== Extents
+
+The file content data is stored in the block defined by the extents.
+
+If the logical block numbers of successive extents are non-contiguous this means
+the file content data has an implicit sparse extent (or hole).
+
+[yellow-background]*TODO determine if the hole can be at the start or end of the file content data.*
+
+== File system block B+ tree
+
+The file system block B+ tree is a structure used to store the directory and
+attributes B+ trees.
+
+=== [[file_system_block_header]]File system block header
+
+==== [[file_system_block_header_version_2]]File system block header version 2
+
+If the file system version <= 4 the file system block header version 2 is used.
+The file system block header version 2 (xfs_da_blkinfo_t) is 12 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | (Logical) block number of the next B+ tree block at the same level
+| 4 | 4 | | (Logical) block number of the previous B+ tree block at the same level
+| 8 | 2 | 0xfbee | Signature (XFS_ATTR_LEAF_MAGIC)
+| 10 | 2 | | [yellow-background]*Unknown (padding)*
+|===
+
+==== [[file_system_block_header_version_3]]File system block header version 3
+
+If the file system version >= 5 the file system block header version 3 is used.
+The file system block header version 3 (xfs_da3_blkinfo_t) is 56 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | (Logical) block number of the next B+ tree block at the same level
+| 4 | 4 | | (Logical) block number of the previous B+ tree block at the same level
+| 8 | 2 | 0x3bee | Signature (XFS_ATTR3_LEAF_MAGIC)
+| 10 | 2 | | [yellow-background]*Unknown (padding)*
+| 12 | 4 | | Checksum
+| 16 | 8 | | Block number
+| 24 | 8 | | Log sequence number
+| 32 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 48 | 8 | | Owner inode number +
+Contains the absolute inode number the block is part of
+|===
+
+==== File system block header signatures
+
+[cols="1,1,5",options="header"]
+|===
+| Signature | Identifier | Description
+| 0x3bee | XFS_ATTR_LEAF_MAGIC | File system version 5 attributes B+ tree leaf block
+| 0x3ebe | XFS_DA3_NODE_MAGIC | File system version 5 directory or attributes B+ tree branch block
+| 0xd2f1 | XFS_DIR2_LEAF1_MAGIC |
+| 0xd2ff | XFS_DIR2_LEAFN_MAGIC |
+| 0xfbee | XFS_ATTR_LEAF_MAGIC | Attributes B+ tree leaf block
+| 0xfebe | XFS_DA_NODE_MAGIC | Directory or attributes B+ tree branch block
+|===
+
+== Extended attributes
+
+Extended attributes are stored in the attributes fork of an inode. The extended
+attributes can be stored in multiple ways:
+
+* as a short-form attributes table
+* as an extent-based <<attributes_block,attributes block>> (or leaf attributes)
+* as an extent-based <<attributes_btree,attributes B+ tree>> (or node attributes)
+
+The start of the attributes fork can be determined using the attributes fork
+descriptor offset.
+
+=== Short-form attributes table
+
+If the inode attributes fork type is XFS_DINODE_FMT_LOCAL the extended
+attributes are sorted in a short-form attributes table (xfs_attr_shortform)
+inline in the attribtes fork. The short-form attributes table consist of:
+
+* a short-form attribute table header
+* one or more short-form attribute table entries
+
+==== The short-form attribute table header
+
+The short-form attribute table header (xfs_attr_sf_hdr) is 4 bytes of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | | Data size +
+Size of the short form attributes table data
+| 2 | 1 | | Number of entries
+| 3 | 1 | | [yellow-background]*Unknown (padding?)*
+|===
+
+[NOTE]
+The size of the short-form attribute header deviates from `[SGI18]` based on
+analysis of test data.
+
+==== The short-form attribute entry
+
+The short-form attribute table entry (xfs_attr_sf_entry) is variable of size
+and consists of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 1 | | Name size
+| 1 | 1 | | Value data size
+| 2 | 1 | | Flags +
+Also see: <<attribute_flags,attribute flags>>
+| 3 | ... | | Name string +
+Contains an ASCII string without end-of-string character
+| ... | ... | | Value data
+|===
+
+=== [[attributes_block]]Attributes (leaf) block
+
+If the inode attributes fork type is XFS_DINODE_FMT_EXTENTS the extended
+attributes are sorted in an attributes (leaf) block. The attributes fork
+contains an <<extent_list,extent list>>.
+
+An attributes (leaf) block (xfs_attr_leafblock_t or xfs_attr3_leafblock_t)
+consist of:
+
+* an <<attributes_leaf_block_header,attributes (leaf) block header>>
+* array of attributes block entries
+* array of local or remote attribute block values
+
+If more than one block is needed to store the extended attributes an
+<<attributes_btree,attributes B+ tree>> is used.
+
+==== [[attributes_leaf_block_header]]Attributes (leaf) block header
+
+===== Attributes (leaf) block header version 2
+
+If the file system version <= 4 the attributes (leaf) block header version 2
+is used. The attributes (leaf) block header version 2 (xfs_attr_leaf_hdr_t) is
+32 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 12 | | <<file_system_block_version_2,File system block header version 2>>
+| 12 | 2 | | Number of entries
+| 14 | 2 | | Used data size +
+Contains the number of bytes of the block data that is used
+| 16 | 2 | | Used data offset
+| 18 | 1 | | Flag to indicate block compaction is needed
+| 19 | 1 | | [yellow-background]*Unknown (padding)*
+| 20 | 4 x 3 | | Array of free regions in the block +
+See section: <<block_free_region_v2,Block free region>>
+|===
+
+===== Attributes (leaf) block header version 3
+
+If the file system version >= 5 the attributes (leaf) block header version 3
+is used. The attributes (leaf) block header version 3 (xfs_attr3_leaf_hdr_t) is
+80 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 56 | | <<file_system_block_version_3,File system block header version 3>>
+| 56 | 2 | | Number of entries
+| 58 | 2 | | Used data size +
+Contains the number of bytes of the block data that is used
+| 60 | 2 | | Used data offset
+| 62 | 1 | | Flag to indicate block compaction is needed
+| 63 | 1 | | [yellow-background]*Unknown (padding)*
+| 64 | 4 x 3 | | Array of free regions in the block +
+See section: <<block_free_region_v2,Block free region>>
+| 76 | 4 | | [yellow-background]*Unknown (padding)*
+|===
+
+==== Attributes (leaf) block entry
+
+The attributes (leaf) block entry (xfs_attr_leaf_entry_t) is 8 bytes of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Name hash
+| 4 | 2 | | Values offset +
+Contains an offset relative to the start of the attributes block
+| 6 | 1 | | Flags +
+Also see: <<attribute_flags,attribute flags>>
+| 7 | 1 | | [yellow-background]*Unknown (padding)*
+|===
+
+==== Attribute (leaf) block values
+
+If the attributes (leaf) block entry flag XFS_ATTR_LOCAL is set the attribute
+values are stored as local attribute block values otherwise as remote attribute
+block values. The value data of remote attribute values are stored in a
+<<remote_attribute_value_data_block,remote attribute value data block>>.
+
+===== Local attribute block values
+
+The local attributes values (xfs_attr_leaf_name_local_t) is variable of size and
+consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 2 | | Value data size
+| 2 | 1 | | Name size
+| 3 | ... | | Name string +
+Contains an ASCII string without end-of-string character
+|===
+
+===== Remote attribute block values
+
+The remote attributes values (xfs_attr_leaf_name_remote_t) is variable of size
+and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Value data block number +
+Contains a block number relative to the start of the attributes extents
+| 4 | 4 | | Value data size
+| 8 | 1 | | Name size
+| 9 | ... | | Name string +
+Contains an ASCII string without end-of-string character
+|===
+
+=== [[attributes_btree]]Attributes B+ tree
+
+If the inode attributes fork type is XFS_DINODE_FMT_BTREE the extended
+attributes are sorted in an attributes B+ tree. The attributes fork
+contains an <<extent_btree,extent B+ tree>>.
+
+The first block in the extents is the B+ tree root block.
+
+=== Attributes B+ tree branch node block
+
+An attributes B+ tree branch node block consist of:
+
+* an <<attributes_branch_node_block_header,attributes branch node block header>>
+* array of attribute branch node entry
+
+===== [[attributes_branch_node_block_header]]Attributes branch node block header
+
+===== Attributes branch node block header version 2
+
+If the file system version <= 4 the attributes branch node block header
+version 2 is used. The attributes branch node block header version 2
+(xfs_da_blkinfo_t) is 16 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 12 | | <<file_system_block_version_2,File system block header version 2>>
+4+| _Branch block header version 2 (xfs_da_node_hdr_t)_
+| 12 | 2 | | Number of entries
+| 14 | 2 | | Node level
+|===
+
+===== Attributes branch node block header version 3
+
+If the file system version >= 5 the attributes branch node block header
+version 3 is used. The attributes branch node block header version 3
+(xfs_da3_blkinfo_t) is 64 bytes of size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 56 | | <<file_system_block_version_3,File system block header version 3>>
+4+| _Branch block header version 3 (xfs_da3_intnode_t)_
+| 56 | 2 | | Number of entries
+| 58 | 2 | | Node level
+| 60 | 4 | | [yellow-background]*Unknown (padding)*
+|===
+
+===== Attributes branch node block entry
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | | Name hash
+| 4 | 4 | | Sub block number +
+Contains a block number relative to the start of the attributes extents
+|===
+
+=== Attributes B+ tree leaf node
+
+The extended attributes B+ tree leaf node is equivalent to an
+<<attributes_block,attributes block>>.
+
+=== [[attribute_flags]]The attribute flags
+
+The attribute flags indicate the prefix (or namespace) of the attribute name.
+
+[cols="1,1,1,5",options="header"]
+|===
+| Value | Identifier | Name prefix | Description
+| 0x00 | | "user." | The attribute is part of the user namespace
+| 0x01 | XFS_ATTR_LOCAL | | The attribute value is contained within the current block
+| 0x02 | XFS_ATTR_ROOT | "trusted." | The attribute is part of the trusted namespace
+| 0x04 | XFS_ATTR_SECURE | "secure." | The attribute is part of the secure namespace
+4+|
+| 0x80 | XFS_ATTR_INCOMPLETE | | This attribute is being modified
+|===
+
+==== [[remote_attribute_value_data_block]]Remote attribute value data block
+
+If the file system version <= 4 the attribute value data is stored directly in
+remote attribute value date blocks.
+
+If the file system version >= 5 each individual remote attribute value data
+block will start with a remote attribute value data block header version 3
+followed by attribute value data.
+
+The attributes extents contain the physical location of the individual remote
+attribute value data blocks.
+
+===== Remote attribute value data block header version 3
+
+The remote attribute value data block header (xfs_attr3_rmt_hdr) is 52 bytes of
+size and consist of:
+
+[cols="1,1,1,5",options="header"]
+|===
+| Offset | Size | Value | Description
+| 0 | 4 | "XARM" | Signature
+| 4 | 4 | | Value data offset
+| 8 | 4 | | Value data size
+| 12 | 4 | | Checksum of the remote attribute value data block
+| 16 | 16 | | Block type identifier +
+Contains an UUID that should correspond to [yellow-background]*sb_uuid or sb_meta_uuid*
+| 32 | 8 | | Owner inode number +
+Contains the absolute inode number the block is part of
+| 40 | 8 | | Block number
+| 48 | 8 | | Log sequence number
+|===
+
+:numbered!:
+[appendix]
+== References
+
+`[SGI18]`
+
+[cols="1,5",options="header"]
+|===
+| Title: | XFS Filesystem Structure - 3rd Edition
+| Author(s): | Silicon Graphics Inc.
+| Date: | May 2018
+| URL: | https://mirrors.edge.kernel.org/pub/linux/utils/fs/xfs/docs/xfs_filesystem_structure.pdf
+|===
+
+[cols="1,5",options="header"]
+|===
+| Title: | XFS Filesystem Structure
+| URL: | https://kernel.googlesource.com/pub/scm/fs/xfs/xfs-documentation/+/master/design/XFS_Filesystem_Structure
+|===
+
+[appendix]
+== GNU Free Documentation License
+
+Version 1.3, 3 November 2008
+Copyright © 2000, 2001, 2002, 2007, 2008 Free Software Foundation, Inc.
+<http://fsf.org/>
+
+Everyone is permitted to copy and distribute verbatim copies of this license
+document, but changing it is not allowed.
+
+=== 0. PREAMBLE
+
+The purpose of this License is to make a manual, textbook, or other functional
+and useful document "free" in the sense of freedom: to assure everyone the
+effective freedom to copy and redistribute it, with or without modifying it,
+either commercially or noncommercially. Secondarily, this License preserves for
+the author and publisher a way to get credit for their work, while not being
+considered responsible for modifications made by others.
+
+This License is a kind of "copyleft", which means that derivative works of the
+document must themselves be free in the same sense. It complements the GNU
+General Public License, which is a copyleft license designed for free software.
+
+We have designed this License in order to use it for manuals for free software,
+because free software needs free documentation: a free program should come with
+manuals providing the same freedoms that the software does. But this License is
+not limited to software manuals; it can be used for any textual work,
+regardless of subject matter or whether it is published as a printed book. We
+recommend this License principally for works whose purpose is instruction or
+reference.
+
+=== 1. APPLICABILITY AND DEFINITIONS
+
+This License applies to any manual or other work, in any medium, that contains
+a notice placed by the copyright holder saying it can be distributed under the
+terms of this License. Such a notice grants a world-wide, royalty-free license,
+unlimited in duration, to use that work under the conditions stated herein. The
+"Document", below, refers to any such manual or work. Any member of the public
+is a licensee, and is addressed as "you". You accept the license if you copy,
+modify or distribute the work in a way requiring permission under copyright law.
+
+A "Modified Version" of the Document means any work containing the Document or
+a portion of it, either copied verbatim, or with modifications and/or
+translated into another language.
+
+A "Secondary Section" is a named appendix or a front-matter section of the
+Document that deals exclusively with the relationship of the publishers or
+authors of the Document to the Document's overall subject (or to related
+matters) and contains nothing that could fall directly within that overall
+subject. (Thus, if the Document is in part a textbook of mathematics, a
+Secondary Section may not explain any mathematics.) The relationship could be a
+matter of historical connection with the subject or with related matters, or of
+legal, commercial, philosophical, ethical or political position regarding them.
+
+The "Invariant Sections" are certain Secondary Sections whose titles are
+designated, as being those of Invariant Sections, in the notice that says that
+the Document is released under this License. If a section does not fit the
+above definition of Secondary then it is not allowed to be designated as
+Invariant. The Document may contain zero Invariant Sections. If the Document
+does not identify any Invariant Sections then there are none.
+
+The "Cover Texts" are certain short passages of text that are listed, as
+Front-Cover Texts or Back-Cover Texts, in the notice that says that the
+Document is released under this License. A Front-Cover Text may be at most 5
+words, and a Back-Cover Text may be at most 25 words.
+
+A "Transparent" copy of the Document means a machine-readable copy, represented
+in a format whose specification is available to the general public, that is
+suitable for revising the document straightforwardly with generic text editors
+or (for images composed of pixels) generic paint programs or (for drawings)
+some widely available drawing editor, and that is suitable for input to text
+formatters or for automatic translation to a variety of formats suitable for
+input to text formatters. A copy made in an otherwise Transparent file format
+whose markup, or absence of markup, has been arranged to thwart or discourage
+subsequent modification by readers is not Transparent. An image format is not
+Transparent if used for any substantial amount of text. A copy that is not
+"Transparent" is called "Opaque".
+
+Examples of suitable formats for Transparent copies include plain ASCII without
+markup, Texinfo input format, LaTeX input format, SGML or XML using a publicly
+available DTD, and standard-conforming simple HTML, PostScript or PDF designed
+for human modification. Examples of transparent image formats include PNG, XCF
+and JPG. Opaque formats include proprietary formats that can be read and edited
+only by proprietary word processors, SGML or XML for which the DTD and/or
+processing tools are not generally available, and the machine-generated HTML,
+PostScript or PDF produced by some word processors for output purposes only.
+
+The "Title Page" means, for a printed book, the title page itself, plus such
+following pages as are needed to hold, legibly, the material this License
+requires to appear in the title page. For works in formats which do not have
+any title page as such, "Title Page" means the text near the most prominent
+appearance of the work's title, preceding the beginning of the body of the text.
+
+The "publisher" means any person or entity that distributes copies of the
+Document to the public.
+
+A section "Entitled XYZ" means a named subunit of the Document whose title
+either is precisely XYZ or contains XYZ in parentheses following text that
+translates XYZ in another language. (Here XYZ stands for a specific section
+name mentioned below, such as "Acknowledgements", "Dedications",
+"Endorsements", or "History".) To "Preserve the Title" of such a section when
+you modify the Document means that it remains a section "Entitled XYZ"
+according to this definition.
+
+The Document may include Warranty Disclaimers next to the notice which states
+that this License applies to the Document. These Warranty Disclaimers are
+considered to be included by reference in this License, but only as regards
+disclaiming warranties: any other implication that these Warranty Disclaimers
+may have is void and has no effect on the meaning of this License.
+
+=== 2. VERBATIM COPYING
+
+You may copy and distribute the Document in any medium, either commercially or
+noncommercially, provided that this License, the copyright notices, and the
+license notice saying this License applies to the Document are reproduced in
+all copies, and that you add no other conditions whatsoever to those of this
+License. You may not use technical measures to obstruct or control the reading
+or further copying of the copies you make or distribute. However, you may
+accept compensation in exchange for copies. If you distribute a large enough
+number of copies you must also follow the conditions in section 3.
+
+You may also lend copies, under the same conditions stated above, and you may
+publicly display copies.
+
+=== 3. COPYING IN QUANTITY
+
+If you publish printed copies (or copies in media that commonly have printed
+covers) of the Document, numbering more than 100, and the Document's license
+notice requires Cover Texts, you must enclose the copies in covers that carry,
+clearly and legibly, all these Cover Texts: Front-Cover Texts on the front
+cover, and Back-Cover Texts on the back cover. Both covers must also clearly
+and legibly identify you as the publisher of these copies. The front cover must
+present the full title with all words of the title equally prominent and
+visible. You may add other material on the covers in addition. Copying with
+changes limited to the covers, as long as they preserve the title of the
+Document and satisfy these conditions, can be treated as verbatim copying in
+other respects.
+
+If the required texts for either cover are too voluminous to fit legibly, you
+should put the first ones listed (as many as fit reasonably) on the actual
+cover, and continue the rest onto adjacent pages.
+
+If you publish or distribute Opaque copies of the Document numbering more than
+100, you must either include a machine-readable Transparent copy along with
+each Opaque copy, or state in or with each Opaque copy a computer-network
+location from which the general network-using public has access to download
+using public-standard network protocols a complete Transparent copy of the
+Document, free of added material. If you use the latter option, you must take
+reasonably prudent steps, when you begin distribution of Opaque copies in
+quantity, to ensure that this Transparent copy will remain thus accessible at
+the stated location until at least one year after the last time you distribute
+an Opaque copy (directly or through your agents or retailers) of that edition
+to the public.
+
+It is requested, but not required, that you contact the authors of the Document
+well before redistributing any large number of copies, to give them a chance to
+provide you with an updated version of the Document.
+
+=== 4. MODIFICATIONS
+
+You may copy and distribute a Modified Version of the Document under the
+conditions of sections 2 and 3 above, provided that you release the Modified
+Version under precisely this License, with the Modified Version filling the
+role of the Document, thus licensing distribution and modification of the
+Modified Version to whoever possesses a copy of it. In addition, you must do
+these things in the Modified Version:
+
+A. Use in the Title Page (and on the covers, if any) a title distinct from that
+of the Document, and from those of previous versions (which should, if there
+were any, be listed in the History section of the Document). You may use the
+same title as a previous version if the original publisher of that version
+gives permission.
+
+B. List on the Title Page, as authors, one or more persons or entities
+responsible for authorship of the modifications in the Modified Version,
+together with at least five of the principal authors of the Document (all of
+its principal authors, if it has fewer than five), unless they release you from
+this requirement.
+
+C. State on the Title page the name of the publisher of the Modified Version,
+as the publisher.
+
+D. Preserve all the copyright notices of the Document.
+
+E. Add an appropriate copyright notice for your modifications adjacent to the
+other copyright notices.
+
+F. Include, immediately after the copyright notices, a license notice giving
+the public permission to use the Modified Version under the terms of this
+License, in the form shown in the Addendum below.
+
+G. Preserve in that license notice the full lists of Invariant Sections and
+required Cover Texts given in the Document's license notice.
+
+H. Include an unaltered copy of this License.
+
+I. Preserve the section Entitled "History", Preserve its Title, and add to it
+an item stating at least the title, year, new authors, and publisher of the
+Modified Version as given on the Title Page. If there is no section Entitled
+"History" in the Document, create one stating the title, year, authors, and
+publisher of the Document as given on its Title Page, then add an item
+describing the Modified Version as stated in the previous sentence.
+
+J. Preserve the network location, if any, given in the Document for public
+access to a Transparent copy of the Document, and likewise the network
+locations given in the Document for previous versions it was based on. These
+may be placed in the "History" section. You may omit a network location for a
+work that was published at least four years before the Document itself, or if
+the original publisher of the version it refers to gives permission.
+
+K. For any section Entitled "Acknowledgements" or "Dedications", Preserve the
+Title of the section, and preserve in the section all the substance and tone of
+each of the contributor acknowledgements and/or dedications given therein.
+
+L. Preserve all the Invariant Sections of the Document, unaltered in their text
+and in their titles. Section numbers or the equivalent are not considered part
+of the section titles.
+
+M. Delete any section Entitled "Endorsements". Such a section may not be
+included in the Modified Version.
+
+N. Do not retitle any existing section to be Entitled "Endorsements" or to
+conflict in title with any Invariant Section.
+
+O. Preserve any Warranty Disclaimers.
+
+If the Modified Version includes new front-matter sections or appendices that
+qualify as Secondary Sections and contain no material copied from the Document,
+you may at your option designate some or all of these sections as invariant. To
+do this, add their titles to the list of Invariant Sections in the Modified
+Version's license notice. These titles must be distinct from any other section
+titles.
+
+You may add a section Entitled "Endorsements", provided it contains nothing but
+endorsements of your Modified Version by various parties—for example,
+statements of peer review or that the text has been approved by an organization
+as the authoritative definition of a standard.
+
+You may add a passage of up to five words as a Front-Cover Text, and a passage
+of up to 25 words as a Back-Cover Text, to the end of the list of Cover Texts
+in the Modified Version. Only one passage of Front-Cover Text and one of
+Back-Cover Text may be added by (or through arrangements made by) any one
+entity. If the Document already includes a cover text for the same cover,
+previously added by you or by arrangement made by the same entity you are
+acting on behalf of, you may not add another; but you may replace the old one,
+on explicit permission from the previous publisher that added the old one.
+
+The author(s) and publisher(s) of the Document do not by this License give
+permission to use their names for publicity for or to assert or imply
+endorsement of any Modified Version.
+
+=== 5. COMBINING DOCUMENTS
+
+You may combine the Document with other documents released under this License,
+under the terms defined in section 4 above for modified versions, provided that
+you include in the combination all of the Invariant Sections of all of the
+original documents, unmodified, and list them all as Invariant Sections of your
+combined work in its license notice, and that you preserve all their Warranty
+Disclaimers.
+
+The combined work need only contain one copy of this License, and multiple
+identical Invariant Sections may be replaced with a single copy. If there are
+multiple Invariant Sections with the same name but different contents, make the
+title of each such section unique by adding at the end of it, in parentheses,
+the name of the original author or publisher of that section if known, or else
+a unique number. Make the same adjustment to the section titles in the list of
+Invariant Sections in the license notice of the combined work.
+
+In the combination, you must combine any sections Entitled "History" in the
+various original documents, forming one section Entitled "History"; likewise
+combine any sections Entitled "Acknowledgements", and any sections Entitled
+"Dedications". You must delete all sections Entitled "Endorsements".
+
+=== 6. COLLECTIONS OF DOCUMENTS
+
+You may make a collection consisting of the Document and other documents
+released under this License, and replace the individual copies of this License
+in the various documents with a single copy that is included in the collection,
+provided that you follow the rules of this License for verbatim copying of each
+of the documents in all other respects.
+
+You may extract a single document from such a collection, and distribute it
+individually under this License, provided you insert a copy of this License
+into the extracted document, and follow this License in all other respects
+regarding verbatim copying of that document.
+
+=== 7. AGGREGATION WITH INDEPENDENT WORKS
+
+A compilation of the Document or its derivatives with other separate and
+independent documents or works, in or on a volume of a storage or distribution
+medium, is called an "aggregate" if the copyright resulting from the
+compilation is not used to limit the legal rights of the compilation's users
+beyond what the individual works permit. When the Document is included in an
+aggregate, this License does not apply to the other works in the aggregate
+which are not themselves derivative works of the Document.
+
+If the Cover Text requirement of section 3 is applicable to these copies of the
+Document, then if the Document is less than one half of the entire aggregate,
+the Document's Cover Texts may be placed on covers that bracket the Document
+within the aggregate, or the electronic equivalent of covers if the Document is
+in electronic form. Otherwise they must appear on printed covers that bracket
+the whole aggregate.
+
+=== 8. TRANSLATION
+
+Translation is considered a kind of modification, so you may distribute
+translations of the Document under the terms of section 4. Replacing Invariant
+Sections with translations requires special permission from their copyright
+holders, but you may include translations of some or all Invariant Sections in
+addition to the original versions of these Invariant Sections. You may include
+a translation of this License, and all the license notices in the Document, and
+any Warranty Disclaimers, provided that you also include the original English
+version of this License and the original versions of those notices and
+disclaimers. In case of a disagreement between the translation and the original
+version of this License or a notice or disclaimer, the original version will
+prevail.
+
+If a section in the Document is Entitled "Acknowledgements", "Dedications", or
+"History", the requirement (section 4) to Preserve its Title (section 1) will
+typically require changing the actual title.
+
+=== 9. TERMINATION
+
+You may not copy, modify, sublicense, or distribute the Document except as
+expressly provided under this License. Any attempt otherwise to copy, modify,
+sublicense, or distribute it is void, and will automatically terminate your
+rights under this License.
+
+However, if you cease all violation of this License, then your license from a
+particular copyright holder is reinstated (a) provisionally, unless and until
+the copyright holder explicitly and finally terminates your license, and (b)
+permanently, if the copyright holder fails to notify you of the violation by
+some reasonable means prior to 60 days after the cessation.
+
+Moreover, your license from a particular copyright holder is reinstated
+permanently if the copyright holder notifies you of the violation by some
+reasonable means, this is the first time you have received notice of violation
+of this License (for any work) from that copyright holder, and you cure the
+violation prior to 30 days after your receipt of the notice.
+
+Termination of your rights under this section does not terminate the licenses
+of parties who have received copies or rights from you under this License. If
+your rights have been terminated and not permanently reinstated, receipt of a
+copy of some or all of the same material does not give you any rights to use it.
+
+=== 10. FUTURE REVISIONS OF THIS LICENSE
+
+The Free Software Foundation may publish new, revised versions of the GNU Free
+Documentation License from time to time. Such new versions will be similar in
+spirit to the present version, but may differ in detail to address new problems
+or concerns. See http://www.gnu.org/copyleft/.
+
+Each version of the License is given a distinguishing version number. If the
+Document specifies that a particular numbered version of this License "or any
+later version" applies to it, you have the option of following the terms and
+conditions either of that specified version or of any later version that has
+been published (not as a draft) by the Free Software Foundation. If the
+Document does not specify a version number of this License, you may choose any
+version ever published (not as a draft) by the Free Software Foundation. If the
+Document specifies that a proxy can decide which future versions of this
+License can be used, that proxy's public statement of acceptance of a version
+permanently authorizes you to choose that version for the Document.
+
+=== 11. RELICENSING
+
+"Massive Multiauthor Collaboration Site" (or "MMC Site") means any World Wide
+Web server that publishes copyrightable works and also provides prominent
+facilities for anybody to edit those works. A public wiki that anybody can edit
+is an example of such a server. A "Massive Multiauthor Collaboration" (or
+"MMC") contained in the site means any set of copyrightable works thus
+published on the MMC site.
+
+"CC-BY-SA" means the Creative Commons Attribution-Share Alike 3.0 license
+published by Creative Commons Corporation, a not-for-profit corporation with a
+principal place of business in San Francisco, California, as well as future
+copyleft versions of that license published by that same organization.
+
+"Incorporate" means to publish or republish a Document, in whole or in part, as
+part of another Document.
+
+An MMC is "eligible for relicensing" if it is licensed under this License, and
+if all works that were first published under this License somewhere other than
+this MMC, and subsequently incorporated in whole or in part into the MMC, (1)
+had no cover texts or invariant sections, and (2) were thus incorporated prior
+to November 1, 2008.
+
+The operator of an MMC Site may republish an MMC contained in the site under
+CC-BY-SA on the same site at any time before August 1, 2009, provided the MMC
+is eligible for relicensing.
+
