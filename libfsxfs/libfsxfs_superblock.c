@@ -618,8 +618,23 @@ int libfsxfs_superblock_read_data(
 	}
 #endif /* defined( HAVE_DEBUG_OUTPUT ) */
 
-	if( ( superblock->format_version != 4 )
-	 && ( superblock->format_version != 5 ) )
+	if (superblock->format_version == 5) {
+		fprintf(
+			stdout,
+			"unsupported XFS version 5\n");
+
+			libcerror_error_set(
+			error,
+			LIBCERROR_ERROR_DOMAIN_RUNTIME,
+			LIBCERROR_RUNTIME_ERROR_UNSUPPORTED_VALUE,
+			"%s: unsupported XFS version 5 with features flags: 0x%04" PRIx16 ".",
+			function,
+			superblock->feature_flags );			
+			
+			return( -1 );
+	}
+
+	if( ( superblock->format_version != 4 ) )
 	{
 		libcerror_error_set(
 		 error,
