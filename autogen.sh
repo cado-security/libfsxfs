@@ -10,7 +10,7 @@ BINDIR="/usr/bin";
 
 if ! test -x "${BINDIR}/aclocal";
 then
-	BINDIR="/usr/local/bin";
+	BINDIR="/opt/homebrew/bin";
 fi
 if ! test -x "${BINDIR}/aclocal";
 then
